@@ -5,7 +5,7 @@ description = [[
 - 出生额外物品
 - 部分物品无耐久
 - 所有配置均有开关
-- github:
+- github: https://github.com/shatter15/NoMuServerMod
 ]]
 author = "NoMu"
 version = "0.0.1"
