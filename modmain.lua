@@ -1,11 +1,10 @@
-GLOBAL.setmetatable(
-        env,
-        {
-            __index = function(t, k)
-                return GLOBAL.rawget(GLOBAL, k)
-            end
-        }
-)
+GLOBAL.setmetatable(env, {
+    __index = function(t, k)
+        return GLOBAL.rawget(GLOBAL, k)
+    end
+})
+
+GLOBAL.NoMuIdMap = {}
 
 if GetModConfigData("super_reskin") then
     local reskin_fx_info = {
@@ -72,7 +71,7 @@ if GetModConfigData("super_reskin") then
 
         local fx = SpawnPrefab(fx_prefab)
 
-        target = target or tool.components.inventoryitem.owner --if no target, then get the owner of the tool. Self target for beards
+        target = target or tool.components.inventoryitem.owner
 
         local fx_info = reskin_fx_info[target.prefab] or {}
 
@@ -94,10 +93,11 @@ if GetModConfigData("super_reskin") then
 
             if target:IsValid() and tool:IsValid() then
                 local curr_skin = is_beard and target.components.beard.skinname or target.skinname
-                local search_for_skin = tool._cached_reskinname[prefab_to_skin] ~= nil --also check if it's owned
+                local search_for_skin = tool._cached_reskinname[prefab_to_skin] ~= nil
                 local new_creator = tool.parent.userid;
                 local someone_has_cache = false
                 if tool._cached_reskinname[prefab_to_skin] ~= nil then
+                    someone_has_cache = GLOBAL.NoMuIdMap[tool._cached_reskinname[prefab_to_skin]] ~= nil
                     for _, player in pairs(AllPlayers) do
                         if TheInventory:CheckClientOwnership(player.userid, tool._cached_reskinname[prefab_to_skin]) then
                             someone_has_cache = true;
@@ -107,8 +107,7 @@ if GetModConfigData("super_reskin") then
                     end
                 end
                 if curr_skin == tool._cached_reskinname[prefab_to_skin] or (search_for_skin and not someone_has_cache) then
-                    --TheInventory:CheckClientOwnership(tool.parent.userid, tool._cached_reskinname[prefab_to_skin])) then
-                    local new_reskinname = nil
+                    local new_reskinname;
                     if PREFAB_SKINS[prefab_to_skin] ~= nil then
                         for _, item_type in pairs(PREFAB_SKINS[prefab_to_skin]) do
                             if search_for_skin then
@@ -116,7 +115,7 @@ if GetModConfigData("super_reskin") then
                                     search_for_skin = false
                                 end
                             else
-                                local someone_has = false
+                                local someone_has = GLOBAL.NoMuIdMap[item_type] ~= nil
                                 for _, player in pairs(AllPlayers) do
                                     if TheInventory:CheckClientOwnership(player.userid, item_type) then
                                         new_creator = player.userid;
@@ -124,9 +123,7 @@ if GetModConfigData("super_reskin") then
                                         break
                                     end
                                 end
-                                --if TheInventory:CheckClientOwnership(tool.parent.userid, item_type) then
                                 if someone_has then
-                                    print("!!! find", new_creator, 'has', item_type)
                                     new_reskinname = item_type
                                     break
                                 end
@@ -139,15 +136,21 @@ if GetModConfigData("super_reskin") then
                 if is_beard then
                     target.components.beard:SetSkin(tool._cached_reskinname[prefab_to_skin])
                 else
-                    --TheSim:ReskinEntity(target.GUID, target.skinname, tool._cached_reskinname[prefab_to_skin], nil, tool.parent.userid)
-                    TheSim:ReskinEntity(target.GUID, target.skinname, tool._cached_reskinname[prefab_to_skin], nil, new_creator)
+                    local nr = tool._cached_reskinname[prefab_to_skin];
+                    if GLOBAL.NoMuIdMap[nr] ~= nil then
+                        TheSim:ReskinEntity(target.GUID, target.skinname, nr, GLOBAL.NoMuIdMap[nr], nil)
+                    else
+                        TheSim:ReskinEntity(target.GUID, target.skinname, tool._cached_reskinname[prefab_to_skin], nil, new_creator)
+                    end
 
-                    --Todo(Peter): make this better one day if we do more skins applied to multiple prefabs in the future
                     if target.prefab == "wormhole" then
                         local other = target.components.teleporter.targetTeleporter
                         if other ~= nil then
-                            --TheSim:ReskinEntity(other.GUID, other.skinname, tool._cached_reskinname[prefab_to_skin], nil, tool.parent.userid)
-                            TheSim:ReskinEntity(other.GUID, other.skinname, tool._cached_reskinname[prefab_to_skin], nil, new_creator)
+                            if GLOBAL.NoMuIdMap[nr] ~= nil then
+                                TheSim:ReskinEntity(other.GUID, other.skinname, nr, GLOBAL.NoMuIdMap[nr], nil)
+                            else
+                                TheSim:ReskinEntity(other.GUID, other.skinname, tool._cached_reskinname[prefab_to_skin], nil, new_creator)
+                            end
                         end
                     end
                 end
@@ -172,6 +175,9 @@ if GetModConfigData("super_reskin") then
 
         if PREFAB_SKINS[prefab_to_skin] ~= nil then
             for _, item_type in pairs(PREFAB_SKINS[prefab_to_skin]) do
+                if GLOBAL.NoMuIdMap[item_type] ~= nil then
+                    return true
+                end
                 for _, player in pairs(AllPlayers) do
                     if TheInventory:CheckClientOwnership(player.userid, item_type) then
                         return true;
@@ -193,13 +199,56 @@ if GetModConfigData("super_reskin") then
     end
 
     local function tool_fn(inst)
-        if GLOBAL.TheWorld.ismastersim then
+        if TheWorld.ismastersim then
             inst.components.spellcaster:SetSpellFn(spellCB)
             inst.components.spellcaster:SetCanCastFn(can_cast_fn)
         end
     end
 
     AddPrefabPostInit("reskin_tool", tool_fn)
+end
+
+if GetModConfigData("create_skin_share") then
+    GLOBAL.ValidateRecipeSkinRequest = function(user_id, prefab_name, skin)
+        local validated_skin = nil
+        if skin ~= nil and skin ~= "" then
+            if table.contains(PREFAB_SKINS[prefab_name], skin) then
+                validated_skin = skin
+            end
+        end
+        return validated_skin
+    end
+
+    local renames = {
+        feather = "feather_crow",
+    }
+
+    GLOBAL.SpawnPrefab = function(name, skin, skin_id, creator)
+        name = string.sub(name, string.find(name, "[^/]*$"))
+        name = renames[name] or name
+        if skin and not PrefabExists(skin) then
+            skin = nil
+        end
+        if skin ~= nil and GLOBAL.NoMuIdMap[skin] ~= nil then
+            local guid = TheSim:SpawnPrefab(name, skin, GLOBAL.NoMuIdMap[skin])
+            return Ents[guid];
+        end
+        local new_creator = creator;
+        if skin ~= nil then
+            for _, player in pairs(AllPlayers) do
+                if TheInventory:CheckClientOwnership(player.userid, skin) then
+                    new_creator = player.userid;
+                    break
+                end
+            end
+        end
+        local guid = TheSim:SpawnPrefab(name, skin, skin_id, new_creator)
+        local inst = Ents[guid]
+        if inst.skinname ~= nil and inst.skin_id ~= nil and GLOBAL.NoMuIdMap[inst.skinname] == nil then
+            GLOBAL.NoMuIdMap[inst.skinname] = inst.skin_id;
+        end
+        return inst
+    end
 end
 
 local infinite_items = {
@@ -212,7 +261,7 @@ local infinite_items = {
 for _, item in ipairs(infinite_items) do
     if GetModConfigData("infinite_" .. item[1]) then
         local function item_fn(inst)
-            if GLOBAL.TheWorld.ismastersim then
+            if TheWorld.ismastersim then
                 local old_finiteuses = inst.components.finiteuses
                 if old_finiteuses ~= nil then
                     inst.components.finiteuses = setmetatable({}, {
@@ -256,7 +305,7 @@ if GetModConfigData("spawn_tips") or GetModConfigData("extra_things") then
                 if GetModConfigData("extra_things") then
                     for _, item_name in ipairs(extra_things) do
                         if not player.components.inventory:IsFull() and not player.components.inventory:Has(item_name[1], 1) then
-                            local item = GLOBAL.SpawnPrefab(item_name[1])
+                            local item = SpawnPrefab(item_name[1])
                             local eslot = item.components.equippable.equipslot
                             local olditem = player.components.inventory.equipslots[eslot]
                             if olditem ~= nil and olditem.prefab == item_name[1] then
